@@ -1,36 +1,102 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# 💰 Contas a Pagar
 
-## Getting Started
+Sistema de controle de contas a pagar com alertas por email e WhatsApp. Construído com Next.js e banco de dados PostgreSQL na nuvem (Neon).
 
-First, run the development server:
+## Funcionalidades
+
+- Cadastro de contas com empresa, valor, data de vencimento e observações
+- Filtro por mês e ano
+- Indicadores visuais de vencimento (atrasado, hoje, em breve, pago)
+- Marcar contas como pagas ou reabrir
+- Painel de alertas com contas vencidas e vencendo em até 3 dias
+- Envio de alertas por email
+- Geração de mensagem de resumo para WhatsApp
+
+---
+
+## Pré-requisitos
+
+- [Node.js](https://nodejs.org) 18 ou superior
+- Conta no [Neon](https://neon.tech) (banco de dados — grátis)
+- Conta no [Vercel](https://vercel.com) para deploy (opcional, grátis)
+
+---
+
+## Configuração local
+
+### 1. Instalar dependências
+
+```bash
+npm install
+```
+
+### 2. Criar o banco de dados
+
+Crie uma conta grátis em [neon.tech](https://neon.tech), crie um projeto e copie a **Connection String**.
+
+### 3. Configurar variáveis de ambiente
+
+Crie um arquivo `.env.local` na raiz do projeto:
+
+```env
+# Banco de dados (Neon)
+DATABASE_URL=postgresql://usuario:senha@host.neon.tech/neondb?sslmode=require
+
+# Email para alertas (opcional — use senha de app do Gmail)
+SMTP_HOST=smtp.gmail.com
+SMTP_USER=seuemail@gmail.com
+SMTP_PASS=sua_senha_de_app
+```
+
+> Para gerar a senha de app do Gmail: [myaccount.google.com/security](https://myaccount.google.com/security) → Senhas de app
+
+### 4. Rodar o projeto
 
 ```bash
 npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+Acesse [http://localhost:3000](http://localhost:3000). O banco de dados é criado automaticamente na primeira execução.
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+---
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+## Deploy na Vercel
 
-## Learn More
+### Via GitHub (recomendado)
 
-To learn more about Next.js, take a look at the following resources:
+1. Suba o projeto no GitHub
+2. Acesse [vercel.com](https://vercel.com) e importe o repositório
+3. Em **Environment Variables**, adicione as mesmas variáveis do `.env.local`
+4. Clique em **Deploy**
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+A Vercel vai gerar um link público (ex: `https://contas-a-pagar.vercel.app`) acessível de qualquer lugar.
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+### Via CLI
 
-## Deploy on Vercel
+```bash
+npm install -g vercel
+vercel
+```
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+---
 
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+## Estrutura do projeto
+
+```
+app/
+├── api/
+│   ├── contas/route.ts   # CRUD de contas (GET, POST, PUT, DELETE)
+│   └── alertas/route.ts  # Alertas por email e WhatsApp
+├── page.tsx              # Interface principal
+lib/
+└── db.ts                 # Conexão com o banco (Neon)
+```
+
+---
+
+## Tecnologias
+
+- [Next.js 15](https://nextjs.org) — framework React com API Routes
+- [Neon](https://neon.tech) — PostgreSQL serverless
+- [Nodemailer](https://nodemailer.com) — envio de emails
+- [TypeScript](https://www.typescriptlang.org)
