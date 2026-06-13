@@ -237,8 +237,11 @@ export default function Home() {
   };
 
   const diasParaVencer = (data: string) => {
-    if (!data) return 999;
-    return Math.ceil((new Date(data + 'T12:00:00').getTime() - new Date().setHours(0,0,0,0)) / 86400000);
+    if (!data) return NaN;
+    const soData = data.includes('T') ? data.split('T')[0] : data.substring(0, 10);
+    const d = new Date(soData + 'T12:00:00');
+    if (isNaN(d.getTime())) return NaN;
+    return Math.ceil((d.getTime() - new Date().setHours(0,0,0,0)) / 86400000);
   };
 
   const badgeVencimento = (conta: Conta) => {
