@@ -237,13 +237,15 @@ export default function Home() {
   };
 
   const diasParaVencer = (data: string) => {
+    if (!data) return 999;
     return Math.ceil((new Date(data + 'T12:00:00').getTime() - new Date().setHours(0,0,0,0)) / 86400000);
   };
 
   const badgeVencimento = (conta: Conta) => {
     if (conta.status === 'pago') return { cor: '#16a34a', bg: '#dcfce7', label: 'Pago' };
     const dias = diasParaVencer(conta.data_vencimento);
-    if (dias < 0) return { cor: '#dc2626', bg: '#fee2e2', label: `${Math.abs(dias)}d atraso` };
+    if (isNaN(dias)) return { cor: "#64748b", bg: "#f1f5f9", label: "?" };
+    if (dias < 0) return { cor: "#dc2626", bg: "#fee2e2", label: `${Math.abs(dias)}d atraso` };
     if (dias === 0) return { cor: '#d97706', bg: '#fef3c7', label: 'Hoje!' };
     if (dias <= 3) return { cor: '#d97706', bg: '#fef3c7', label: `${dias}d` };
     return { cor: '#2563eb', bg: '#dbeafe', label: `${dias}d` };

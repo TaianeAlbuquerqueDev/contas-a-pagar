@@ -4,27 +4,52 @@ import { sql, initDB } from '@/lib/db';
 
 function parseDate(val: any): string | null {
   if (!val) return null;
+
+  // Already a JS Date object
+  if (val instanceof Date) {
+    const y = val.getFullYear();
+    const m = String(val.getMonth() + 1).padStart(2,'0');
+    const d = String(val.getDate()).padStart(2,'0');
+    return `${y}-${m}-${d}`;
+  }
+
   // Excel serial date number
   if (typeof val === 'number') {
     const date = XLSX.SSF.parse_date_code(val);
-    if (date) {
-      const d = `${date.y}-${String(date.m).padStart(2,'0')}-${String(date.d).padStart(2,'0')}`;
-      return d;
+    if (date && date.y > 1900) {
+      return `${date.y}-${String(date.m).padStart(2,'0')}-${String(date.d).padStart(2,'0')}`;
     }
   }
-  // String formats: DD/MM/YYYY or YYYY-MM-DD
+
   const str = String(val).trim();
+
+  // DD/MM/YYYY
   const br = str.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
   if (br) return `${br[3]}-${br[2].padStart(2,'0')}-${br[1].padStart(2,'0')}`;
-  const iso = str.match(/^\d{4}-\d{2}-\d{2}$/);
-  if (iso) return str;
+
+  // YYYY-MM-DD
+  if (str.match(/^\d{4}-\d{2}-\d{2}$/)) return str;
+
+  // DD-MM-YYYY
+  const dash = str.match(/^(\d{1,2})-(\d{1,2})-(\d{4})$/);
+  if (dash) return `${dash[3]}-${dash[2].padStart(2,'0')}-${dash[1].padStart(2,'0')}`;
+
+  // Last resort
+  const d = new Date(str);
+  if (!isNaN(d.getTime())) return d.toISOString().split('T')[0];
+
   return null;
 }
 
 function parseValor(val: any): number | null {
   if (!val && val !== 0) return null;
   if (typeof val === 'number') return val;
-  const str = String(val).replace(/R\$\s?/g, '').replace(/\./g, '').replace(',', '.').trim();
+  const str = String(val)
+    .replace(/R\$\s?/g, '')
+    .replace(/\s/g, '')
+    .replace(/\.(?=\d{3})/g, '')  // remove thousand separators
+    .replace(',', '.')
+    .trim();
   const n = parseFloat(str);
   return isNaN(n) ? null : n;
 }
@@ -34,14 +59,16 @@ function normalizeRows(rows: any[]): any[] {
     empresa:         ['empresa', 'fornecedor', 'company', 'nome', 'credor'],
     valor:           ['valor', 'value', 'total', 'montante', 'quantia', 'amount'],
     data_vencimento: ['data_vencimento', 'vencimento', 'data', 'due_date', 'prazo', 'date'],
-    observacoes:     ['observacoes', 'observação', 'obs', 'descricao', 'descrição', 'notas', 'notes', 'detalhes'],
+    observacoes:     ['observacoes', 'observacao', 'obs', 'descricao', 'descricao', 'notas', 'notes', 'detalhes'],
   };
 
   return rows
     .filter(row => Object.values(row).some(v => v !== null && v !== ''))
     .map(row => {
       const normalized: any = {};
-      const keys = Object.keys(row).map(k => k.toLowerCase().trim().normalize('NFD').replace(/[\u0300-\u036f]/g, ''));
+      const keys = Object.keys(row).map(k =>
+        k.toLowerCase().trim().normalize('NFD').replace(/[\u0300-\u036f]/g, '')
+      );
       const vals = Object.values(row);
 
       for (const [campo, aliases] of Object.entries(CAMPOS)) {
@@ -68,18 +95,16 @@ export async function POST(request: NextRequest) {
     let rawRows: any[] = [];
 
     if (ext === 'xlsx' || ext === 'xls' || ext === 'csv') {
-      const workbook = XLSX.read(buffer, { type: 'buffer', cellDates: false });
+      // cellDates:true converts serial numbers to JS Date objects automatically
+      const workbook = XLSX.read(buffer, { type: 'buffer', cellDates: true });
       const sheet = workbook.Sheets[workbook.SheetNames[0]];
       rawRows = XLSX.utils.sheet_to_json(sheet, { defval: null });
     } else if (ext === 'pdf') {
-      // Dynamic import to avoid build issues
       const pdfParseModule = await import('pdf-parse');
       const pdfParse = (pdfParseModule as any).default ?? pdfParseModule;
       const pdfData = await pdfParse(buffer);
       const lines = pdfData.text.split('\n').map((l: string) => l.trim()).filter(Boolean);
 
-      // Try to extract lines that look like conta rows
-      // Expected pattern: empresa | valor | data (flexible)
       const datePattern = /(\d{1,2}\/\d{1,2}\/\d{4}|\d{4}-\d{2}-\d{2})/;
       const valorPattern = /R?\$?\s?[\d.,]+/;
 
@@ -87,7 +112,6 @@ export async function POST(request: NextRequest) {
         const dateMatch = line.match(datePattern);
         const valorMatch = line.match(valorPattern);
         if (dateMatch && valorMatch) {
-          // Remove matched parts to get empresa text
           const empresa = line
             .replace(dateMatch[0], '')
             .replace(valorMatch[0], '')
@@ -107,26 +131,27 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Formato não suportado. Use .xlsx, .xls, .csv ou .pdf' }, { status: 400 });
     }
 
-    const contas = ext === 'pdf' ? rawRows.map(r => ({
-      empresa: r.empresa,
-      valor: parseValor(r.valor),
-      data_vencimento: parseDate(r.data_vencimento),
-      observacoes: r.observacoes || '',
-    })) : normalizeRows(rawRows).map(r => ({
-      empresa: String(r.empresa).trim(),
-      valor: parseValor(r.valor),
-      data_vencimento: parseDate(r.data_vencimento),
-      observacoes: r.observacoes ? String(r.observacoes).trim() : '',
-    }));
+    const contas = ext === 'pdf'
+      ? rawRows.map(r => ({
+          empresa: r.empresa,
+          valor: parseValor(r.valor),
+          data_vencimento: parseDate(r.data_vencimento),
+          observacoes: r.observacoes || '',
+        }))
+      : normalizeRows(rawRows).map(r => ({
+          empresa: String(r.empresa).trim(),
+          valor: parseValor(r.valor),
+          data_vencimento: parseDate(r.data_vencimento),
+          observacoes: r.observacoes ? String(r.observacoes).trim() : '',
+        }));
 
-    const validas = contas.filter(c => c.empresa && c.valor !== null && c.data_vencimento);
+    const validas = contas.filter(c => c.empresa && c.valor !== null && !isNaN(c.valor as number) && c.data_vencimento);
     const invalidas = contas.length - validas.length;
 
     if (!confirmar) {
       return NextResponse.json({ preview: validas, invalidas, total: contas.length });
     }
 
-    // Insert all valid rows
     await initDB();
     let inseridas = 0;
     for (const c of validas) {
