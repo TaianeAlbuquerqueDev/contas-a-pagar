@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 
 type Conta = {
   id: number;
@@ -9,6 +9,13 @@ type Conta = {
   data_vencimento: string;
   valor: number;
   status: 'pendente' | 'pago';
+};
+
+type PreviewConta = {
+  empresa: string;
+  valor: number | null;
+  data_vencimento: string | null;
+  observacoes: string;
 };
 
 const MESES = [
@@ -25,6 +32,7 @@ export default function Home() {
   const [totalPago, setTotalPago] = useState(0);
   const [alertas, setAlertas] = useState<{ vencendo: Conta[]; vencidas: Conta[] }>({ vencendo: [], vencidas: [] });
   const [modal, setModal] = useState(false);
+  const [modalImport, setModalImport] = useState(false);
   const [editando, setEditando] = useState<Conta | null>(null);
   const [form, setForm] = useState({ empresa: '', observacoes: '', data_vencimento: '', valor: '' });
   const [loading, setLoading] = useState(false);
@@ -33,9 +41,17 @@ export default function Home() {
   const [abaAtiva, setAbaAtiva] = useState<'contas' | 'alertas'>('contas');
   const [emailAlerta, setEmailAlerta] = useState('');
 
+  // Import state
+  const [importFile, setImportFile] = useState<File | null>(null);
+  const [importLoading, setImportLoading] = useState(false);
+  const [importErro, setImportErro] = useState('');
+  const [importPreview, setImportPreview] = useState<PreviewConta[] | null>(null);
+  const [importStats, setImportStats] = useState<{ total: number; invalidas: number } | null>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+
   const showToast = (msg: string) => {
     setToast(msg);
-    setTimeout(() => setToast(''), 3000);
+    setTimeout(() => setToast(''), 3500);
   };
 
   const carregarContas = useCallback(async () => {
@@ -161,6 +177,65 @@ export default function Home() {
     if (data.whatsapp_url) window.open(data.whatsapp_url, '_blank');
   };
 
+  // Import handlers
+  const abrirImport = () => {
+    setImportFile(null);
+    setImportPreview(null);
+    setImportStats(null);
+    setImportErro('');
+    setModalImport(true);
+  };
+
+  const onFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const f = e.target.files?.[0];
+    if (!f) return;
+    setImportFile(f);
+    setImportPreview(null);
+    setImportStats(null);
+    setImportErro('');
+  };
+
+  const previewImport = async () => {
+    if (!importFile) return;
+    setImportLoading(true);
+    setImportErro('');
+    try {
+      const fd = new FormData();
+      fd.append('file', importFile);
+      fd.append('confirmar', 'false');
+      const res = await fetch('/api/importar', { method: 'POST', body: fd });
+      const data = await res.json();
+      if (data.error) { setImportErro(data.error); return; }
+      setImportPreview(data.preview);
+      setImportStats({ total: data.total, invalidas: data.invalidas });
+    } catch {
+      setImportErro('Erro ao processar o arquivo.');
+    } finally {
+      setImportLoading(false);
+    }
+  };
+
+  const confirmarImport = async () => {
+    if (!importFile || !importPreview?.length) return;
+    setImportLoading(true);
+    try {
+      const fd = new FormData();
+      fd.append('file', importFile);
+      fd.append('confirmar', 'true');
+      const res = await fetch('/api/importar', { method: 'POST', body: fd });
+      const data = await res.json();
+      if (data.error) { setImportErro(data.error); return; }
+      setModalImport(false);
+      showToast(`${data.inseridas} conta(s) importada(s) com sucesso!`);
+      carregarContas();
+      carregarAlertas();
+    } catch {
+      setImportErro('Erro ao importar.');
+    } finally {
+      setImportLoading(false);
+    }
+  };
+
   const diasParaVencer = (data: string) => {
     return Math.ceil((new Date(data + 'T12:00:00').getTime() - new Date().setHours(0,0,0,0)) / 86400000);
   };
@@ -183,9 +258,14 @@ export default function Home() {
           <span style={{ fontSize: 22 }}>💰</span>
           <span style={{ fontWeight: 700, fontSize: 18 }}>Contas a Pagar</span>
         </div>
-        <button onClick={() => abrirModal()} style={{ background: '#3b82f6', color: '#fff', border: 'none', borderRadius: 8, padding: '8px 18px', cursor: 'pointer', fontWeight: 600, fontSize: 14 }}>
-          + Nova Conta
-        </button>
+        <div style={{ display: 'flex', gap: 10 }}>
+          <button onClick={abrirImport} style={{ background: 'transparent', color: '#94a3b8', border: '1px solid #334155', borderRadius: 8, padding: '8px 16px', cursor: 'pointer', fontWeight: 600, fontSize: 14 }}>
+            📂 Importar
+          </button>
+          <button onClick={() => abrirModal()} style={{ background: '#3b82f6', color: '#fff', border: 'none', borderRadius: 8, padding: '8px 18px', cursor: 'pointer', fontWeight: 600, fontSize: 14 }}>
+            + Nova Conta
+          </button>
+        </div>
       </header>
 
       {toast && (
@@ -252,9 +332,14 @@ export default function Home() {
               <div style={{ textAlign: 'center', padding: 60, color: '#94a3b8' }}>
                 <div style={{ fontSize: 48 }}>📭</div>
                 <div style={{ marginTop: 8 }}>Nenhuma conta neste período</div>
-                <button onClick={() => abrirModal()} style={{ marginTop: 16, background: '#3b82f6', color: '#fff', border: 'none', borderRadius: 8, padding: '10px 20px', cursor: 'pointer' }}>
-                  + Adicionar conta
-                </button>
+                <div style={{ display: 'flex', gap: 10, justifyContent: 'center', marginTop: 16 }}>
+                  <button onClick={() => abrirModal()} style={{ background: '#3b82f6', color: '#fff', border: 'none', borderRadius: 8, padding: '10px 20px', cursor: 'pointer' }}>
+                    + Adicionar conta
+                  </button>
+                  <button onClick={abrirImport} style={{ background: '#fff', color: '#1e293b', border: '1px solid #e2e8f0', borderRadius: 8, padding: '10px 20px', cursor: 'pointer' }}>
+                    📂 Importar planilha
+                  </button>
+                </div>
               </div>
             ) : (
               <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
@@ -354,6 +439,7 @@ export default function Home() {
         )}
       </div>
 
+      {/* Modal nova/editar conta */}
       {modal && (
         <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.5)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000, padding: 20 }}>
           <div style={{ background: '#fff', borderRadius: 16, padding: 28, width: '100%', maxWidth: 480 }}>
@@ -380,6 +466,147 @@ export default function Home() {
               <button onClick={salvar} disabled={loading} style={{ flex: 2, padding: 12, borderRadius: 8, border: 'none', background: '#1e293b', color: '#fff', cursor: 'pointer', fontWeight: 700, fontSize: 15 }}>
                 {loading ? 'Salvando...' : editando ? 'Salvar' : 'Adicionar'}
               </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Modal importar */}
+      {modalImport && (
+        <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.5)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000, padding: 20 }}>
+          <div style={{ background: '#fff', borderRadius: 16, padding: 28, width: '100%', maxWidth: 600, maxHeight: '85vh', overflowY: 'auto' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20 }}>
+              <h2 style={{ margin: 0, fontSize: 18, fontWeight: 700 }}>📂 Importar Contas</h2>
+              <button onClick={() => setModalImport(false)} style={{ border: 'none', background: 'none', cursor: 'pointer', fontSize: 20 }}>✕</button>
+            </div>
+
+            {/* Formatos aceitos */}
+            <div style={{ background: '#f8fafc', borderRadius: 10, padding: '12px 16px', marginBottom: 20, fontSize: 13, color: '#64748b' }}>
+              <div style={{ fontWeight: 600, color: '#1e293b', marginBottom: 6 }}>Formatos aceitos:</div>
+              <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+                {[
+                  { ext: '.xlsx / .xls', desc: 'Excel' },
+                  { ext: '.csv', desc: 'Planilha CSV' },
+                  { ext: '.pdf', desc: 'PDF com tabela' },
+                ].map(f => (
+                  <span key={f.ext} style={{ background: '#e2e8f0', padding: '4px 10px', borderRadius: 6, fontSize: 12 }}>
+                    <strong>{f.ext}</strong> — {f.desc}
+                  </span>
+                ))}
+              </div>
+              <div style={{ marginTop: 10, lineHeight: 1.6 }}>
+                A planilha deve ter colunas chamadas <strong>empresa</strong>, <strong>valor</strong> e <strong>data_vencimento</strong> (ou variações como "vencimento", "fornecedor", etc). A coluna <strong>observacoes</strong> é opcional.
+              </div>
+            </div>
+
+            {/* Modelo de planilha */}
+            <div style={{ marginBottom: 20 }}>
+              <div style={{ fontSize: 13, fontWeight: 600, color: '#374151', marginBottom: 8 }}>Exemplo de estrutura da planilha:</div>
+              <div style={{ overflowX: 'auto' }}>
+                <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
+                  <thead>
+                    <tr style={{ background: '#1e293b', color: '#fff' }}>
+                      {['empresa', 'valor', 'data_vencimento', 'observacoes'].map(h => (
+                        <th key={h} style={{ padding: '8px 12px', textAlign: 'left', fontWeight: 600 }}>{h}</th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {[
+                      ['Fornecedor ABC', '1500.00', '30/06/2026', 'NF 1234'],
+                      ['Aluguel Escritório', '3200.00', '05/07/2026', ''],
+                      ['Internet Fibra', '199.90', '10/07/2026', 'Plano empresarial'],
+                    ].map((row, i) => (
+                      <tr key={i} style={{ background: i % 2 === 0 ? '#f8fafc' : '#fff' }}>
+                        {row.map((cell, j) => (
+                          <td key={j} style={{ padding: '7px 12px', borderBottom: '1px solid #e2e8f0', color: '#374151' }}>{cell}</td>
+                        ))}
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+
+            {/* Upload */}
+            <div
+              onClick={() => fileInputRef.current?.click()}
+              style={{
+                border: `2px dashed ${importFile ? '#3b82f6' : '#cbd5e1'}`,
+                borderRadius: 12, padding: '24px', textAlign: 'center', cursor: 'pointer',
+                background: importFile ? '#eff6ff' : '#f8fafc', marginBottom: 16,
+              }}
+            >
+              <div style={{ fontSize: 32, marginBottom: 8 }}>{importFile ? '📄' : '📁'}</div>
+              <div style={{ fontWeight: 600, color: '#1e293b', marginBottom: 4 }}>
+                {importFile ? importFile.name : 'Clique para selecionar o arquivo'}
+              </div>
+              <div style={{ fontSize: 13, color: '#64748b' }}>
+                {importFile ? `${(importFile.size / 1024).toFixed(1)} KB` : '.xlsx, .xls, .csv ou .pdf'}
+              </div>
+              <input ref={fileInputRef} type="file" accept=".xlsx,.xls,.csv,.pdf" onChange={onFileChange} style={{ display: 'none' }} />
+            </div>
+
+            {importErro && (
+              <div style={{ background: '#fef2f2', border: '1px solid #fecaca', borderRadius: 8, padding: '10px 14px', color: '#dc2626', fontSize: 13, marginBottom: 16 }}>
+                ⚠️ {importErro}
+              </div>
+            )}
+
+            {/* Preview */}
+            {importPreview && (
+              <div style={{ marginBottom: 16 }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 }}>
+                  <div style={{ fontWeight: 600, fontSize: 14, color: '#1e293b' }}>
+                    Prévia — {importPreview.length} conta(s) encontrada(s)
+                  </div>
+                  {importStats && importStats.invalidas > 0 && (
+                    <span style={{ background: '#fef3c7', color: '#92400e', fontSize: 12, padding: '3px 10px', borderRadius: 20 }}>
+                      {importStats.invalidas} linha(s) ignorada(s)
+                    </span>
+                  )}
+                </div>
+                <div style={{ maxHeight: 200, overflowY: 'auto', border: '1px solid #e2e8f0', borderRadius: 8 }}>
+                  <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
+                    <thead style={{ position: 'sticky', top: 0, background: '#f1f5f9' }}>
+                      <tr>
+                        {['Empresa', 'Valor', 'Vencimento', 'Obs.'].map(h => (
+                          <th key={h} style={{ padding: '8px 12px', textAlign: 'left', fontWeight: 600, color: '#374151' }}>{h}</th>
+                        ))}
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {importPreview.map((c, i) => (
+                        <tr key={i} style={{ background: i % 2 === 0 ? '#fff' : '#f8fafc' }}>
+                          <td style={{ padding: '7px 12px', borderBottom: '1px solid #f1f5f9' }}>{c.empresa}</td>
+                          <td style={{ padding: '7px 12px', borderBottom: '1px solid #f1f5f9', color: '#dc2626', fontWeight: 600 }}>
+                            R$ {c.valor?.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+                          </td>
+                          <td style={{ padding: '7px 12px', borderBottom: '1px solid #f1f5f9' }}>
+                            {c.data_vencimento ? new Date(c.data_vencimento + 'T12:00:00').toLocaleDateString('pt-BR') : '-'}
+                          </td>
+                          <td style={{ padding: '7px 12px', borderBottom: '1px solid #f1f5f9', color: '#64748b' }}>{c.observacoes || '-'}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            )}
+
+            <div style={{ display: 'flex', gap: 10 }}>
+              <button onClick={() => setModalImport(false)} style={{ flex: 1, padding: 12, borderRadius: 8, border: '1px solid #e2e8f0', background: '#f8fafc', cursor: 'pointer', fontWeight: 600 }}>
+                Cancelar
+              </button>
+              {!importPreview ? (
+                <button onClick={previewImport} disabled={!importFile || importLoading} style={{ flex: 2, padding: 12, borderRadius: 8, border: 'none', background: importFile ? '#3b82f6' : '#94a3b8', color: '#fff', cursor: importFile ? 'pointer' : 'default', fontWeight: 700 }}>
+                  {importLoading ? 'Analisando...' : '🔍 Analisar arquivo'}
+                </button>
+              ) : (
+                <button onClick={confirmarImport} disabled={importLoading || !importPreview.length} style={{ flex: 2, padding: 12, borderRadius: 8, border: 'none', background: '#16a34a', color: '#fff', cursor: 'pointer', fontWeight: 700 }}>
+                  {importLoading ? 'Importando...' : `✅ Importar ${importPreview.length} conta(s)`}
+                </button>
+              )}
             </div>
           </div>
         </div>
