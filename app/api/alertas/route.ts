@@ -1,34 +1,29 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { sql } from '@/lib/db';
 
-export async function GET(request: NextRequest) {
+export async function GET() {
   try {
     const hoje = new Date();
-    const amanha = new Date(hoje);
-    amanha.setDate(amanha.getDate() + 1);
-    const em3dias = new Date(hoje);
-    em3dias.setDate(em3dias.getDate() + 3);
+    const ano = hoje.getFullYear();
+    const mes = hoje.getMonth() + 1;
+    const diaHoje = hoje.getDate();
+    const dia3 = diaHoje + 3;
 
-    const contasVencendo = await sql`
-      SELECT * FROM contas
-      WHERE status = 'pendente'
-      AND data_vencimento <= ${em3dias.toISOString().split('T')[0]}
-      AND data_vencimento >= ${hoje.toISOString().split('T')[0]}
-      ORDER BY data_vencimento ASC
+    const vencidas = await sql`
+      SELECT * FROM pagamentos
+      WHERE status = 'pendente' AND ano = ${ano} AND mes = ${mes}
+        AND dia_vencimento < ${diaHoje}
+      ORDER BY dia_vencimento ASC
     `;
 
-    const contasVencidas = await sql`
-      SELECT * FROM contas
-      WHERE status = 'pendente'
-      AND data_vencimento < ${hoje.toISOString().split('T')[0]}
-      ORDER BY data_vencimento DESC
+    const vencendo = await sql`
+      SELECT * FROM pagamentos
+      WHERE status = 'pendente' AND ano = ${ano} AND mes = ${mes}
+        AND dia_vencimento >= ${diaHoje} AND dia_vencimento <= ${dia3}
+      ORDER BY dia_vencimento ASC
     `;
 
-    return NextResponse.json({
-      vencendo: contasVencendo,
-      vencidas: contasVencidas,
-      total: contasVencendo.length + contasVencidas.length
-    });
+    return NextResponse.json({ vencendo, vencidas, total: vencidas.length + vencendo.length });
   } catch (error: any) {
     return NextResponse.json({ error: error.message }, { status: 500 });
   }
@@ -36,8 +31,7 @@ export async function GET(request: NextRequest) {
 
 export async function POST(request: NextRequest) {
   try {
-    const body = await request.json();
-    const { tipo, contas, email_destino } = body;
+    const { tipo, pagamentos: contas, email_destino } = await request.json();
 
     if (tipo === 'email') {
       const nodemailer = await import('nodemailer');
@@ -45,60 +39,45 @@ export async function POST(request: NextRequest) {
         host: process.env.SMTP_HOST || 'smtp.gmail.com',
         port: 587,
         secure: false,
-        auth: {
-          user: process.env.SMTP_USER,
-          pass: process.env.SMTP_PASS,
-        },
+        auth: { user: process.env.SMTP_USER, pass: process.env.SMTP_PASS },
       });
 
-      const linhasTabela = contas.map((c: any) => `
+      const linhas = contas.map((c: any) => `
         <tr>
           <td style="padding:8px;border:1px solid #ddd">${c.empresa}</td>
           <td style="padding:8px;border:1px solid #ddd">R$ ${parseFloat(c.valor).toFixed(2)}</td>
-          <td style="padding:8px;border:1px solid #ddd">${new Date(c.data_vencimento).toLocaleDateString('pt-BR')}</td>
+          <td style="padding:8px;border:1px solid #ddd">Dia ${c.dia_vencimento}</td>
           <td style="padding:8px;border:1px solid #ddd">${c.observacoes || '-'}</td>
-        </tr>
-      `).join('');
+        </tr>`).join('');
 
       await transporter.sendMail({
         from: process.env.SMTP_USER,
         to: email_destino || process.env.SMTP_USER,
-        subject: `⚠️ Contas a Pagar - ${contas.length} conta(s) pendente(s)`,
-        html: `
-          <h2>Resumo de Contas a Pagar</h2>
+        subject: `⚠️ Contas a Pagar — ${contas.length} pendente(s)`,
+        html: `<h2>Contas a Pagar</h2>
           <table style="border-collapse:collapse;width:100%">
             <tr style="background:#f0f0f0">
               <th style="padding:8px;border:1px solid #ddd">Empresa</th>
               <th style="padding:8px;border:1px solid #ddd">Valor</th>
               <th style="padding:8px;border:1px solid #ddd">Vencimento</th>
-              <th style="padding:8px;border:1px solid #ddd">Observações</th>
-            </tr>
-            ${linhasTabela}
+              <th style="padding:8px;border:1px solid #ddd">Obs.</th>
+            </tr>${linhas}
           </table>
-          <p>Total pendente: R$ ${contas.reduce((s: number, c: any) => s + parseFloat(c.valor), 0).toFixed(2)}</p>
-        `,
+          <p>Total: R$ ${contas.reduce((s: number, c: any) => s + parseFloat(c.valor), 0).toFixed(2)}</p>`,
       });
-
-      return NextResponse.json({ success: true, mensagem: 'Email enviado com sucesso!' });
+      return NextResponse.json({ success: true });
     }
 
     if (tipo === 'whatsapp') {
       const total = contas.reduce((s: number, c: any) => s + parseFloat(c.valor), 0);
       const lista = contas.map((c: any) =>
-        `• ${c.empresa} - R$ ${parseFloat(c.valor).toFixed(2)} (vence ${new Date(c.data_vencimento).toLocaleDateString('pt-BR')})`
+        `• ${c.empresa} — R$ ${parseFloat(c.valor).toFixed(2)} (dia ${c.dia_vencimento})`
       ).join('\n');
-
-      const mensagem = encodeURIComponent(
-        `🔔 *Contas a Pagar*\n\n${lista}\n\n*Total: R$ ${total.toFixed(2)}*`
-      );
-
-      return NextResponse.json({
-        success: true,
-        whatsapp_url: `https://wa.me/?text=${mensagem}`
-      });
+      const msg = encodeURIComponent(`🔔 *Contas a Pagar*\n\n${lista}\n\n*Total: R$ ${total.toFixed(2)}*`);
+      return NextResponse.json({ success: true, whatsapp_url: `https://wa.me/?text=${msg}` });
     }
 
-    return NextResponse.json({ error: 'Tipo de alerta inválido' }, { status: 400 });
+    return NextResponse.json({ error: 'Tipo inválido' }, { status: 400 });
   } catch (error: any) {
     return NextResponse.json({ error: error.message }, { status: 500 });
   }
