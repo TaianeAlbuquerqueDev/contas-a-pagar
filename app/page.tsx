@@ -10,7 +10,10 @@ type Pagamento = {
   mes: number; ano: number; dia_vencimento: number;
   valor: number; observacoes: string; status: 'pendente' | 'pago'; avulso: boolean;
 };
-type PreviewConta = { empresa: string; valor: number | null; data_vencimento: string | null; observacoes: string };
+type PreviewConta = {
+  empresa: string; valor: number | null;
+  data_vencimento: string | null; dia_vencimento: number | null; observacoes: string;
+};
 
 const MESES = ['Janeiro','Fevereiro','Março','Abril','Maio','Junho','Julho','Agosto','Setembro','Outubro','Novembro','Dezembro'];
 
@@ -20,33 +23,28 @@ export default function Home() {
   const [mesSel, setMesSel] = useState(hoje.getMonth() + 1);
   const [anoSel, setAnoSel] = useState(hoje.getFullYear());
 
-  // Pagamentos
   const [pagamentos, setPagamentos] = useState<Pagamento[]>([]);
   const [totalPendente, setTotalPendente] = useState(0);
   const [totalPago, setTotalPago] = useState(0);
   const [mesGerado, setMesGerado] = useState(false);
-
-  // Contas fixas
   const [fixas, setFixas] = useState<ContaFixa[]>([]);
-
-  // Alertas
   const [alertas, setAlertas] = useState<{vencendo: Pagamento[]; vencidas: Pagamento[]}>({vencendo:[], vencidas:[]});
   const [emailAlerta, setEmailAlerta] = useState('');
 
-  // Modais
   const [modalPag, setModalPag] = useState(false);
   const [modalFixa, setModalFixa] = useState(false);
+  const [modalImport, setModalImport] = useState(false);
   const [editPag, setEditPag] = useState<Pagamento|null>(null);
   const [editFixa, setEditFixa] = useState<ContaFixa|null>(null);
   const [formPag, setFormPag] = useState({empresa:'', dia_vencimento:'', valor:'', observacoes:''});
   const [formFixa, setFormFixa] = useState({empresa:'', dia_vencimento:'', valor:'', observacoes:''});
 
   // Import
-  const [modalImport, setModalImport] = useState(false);
   const [importFile, setImportFile] = useState<File|null>(null);
   const [importLoading, setImportLoading] = useState(false);
   const [importPreview, setImportPreview] = useState<PreviewConta[]|null>(null);
   const [importStats, setImportStats] = useState<{total:number; invalidas:number}|null>(null);
+  const [importDestino, setImportDestino] = useState<'pagamentos'|'fixas'>('pagamentos');
   const fileRef = useRef<HTMLInputElement>(null);
 
   const [loading, setLoading] = useState(false);
@@ -81,7 +79,7 @@ export default function Home() {
   }, []);
 
   useEffect(() => { carregarPagamentos(); carregarAlertas(); }, [carregarPagamentos, carregarAlertas]);
-  useEffect(() => { if (aba === 'fixas') carregarFixas(); }, [aba, carregarFixas]);
+  useEffect(() => { carregarFixas(); }, [carregarFixas]);
 
   const gerarMes = async () => {
     if (!confirm(`Gerar pagamentos de ${MESES[mesSel-1]} ${anoSel} a partir das contas fixas?`)) return;
@@ -169,7 +167,7 @@ export default function Home() {
     await fetch('/api/contas-fixas', { method:'PUT', headers:{'Content-Type':'application/json'},
       body: JSON.stringify({...f, ativa: !f.ativa}),
     });
-    showToast(f.ativa ? 'Conta desativada.' : 'Conta ativada!'); carregarFixas();
+    showToast(f.ativa ? 'Desativada.' : 'Ativada!'); carregarFixas();
   };
 
   const enviarEmail = async () => {
@@ -194,7 +192,10 @@ export default function Home() {
   };
 
   // Import
-  const abrirImport = () => { setImportFile(null); setImportPreview(null); setImportStats(null); setErro(''); setModalImport(true); };
+  const abrirImport = () => {
+    setImportFile(null); setImportPreview(null); setImportStats(null);
+    setErro(''); setImportDestino('pagamentos'); setModalImport(true);
+  };
   const onFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const f = e.target.files?.[0]; if (!f) return;
     setImportFile(f); setImportPreview(null); setImportStats(null); setErro('');
@@ -202,7 +203,10 @@ export default function Home() {
   const previewImport = async () => {
     if (!importFile) return;
     setImportLoading(true); setErro('');
-    const fd = new FormData(); fd.append('file', importFile); fd.append('confirmar','false');
+    const fd = new FormData();
+    fd.append('file', importFile); fd.append('confirmar','false');
+    fd.append('destino', importDestino);
+    fd.append('mes', String(mesSel)); fd.append('ano', String(anoSel));
     const r = await fetch('/api/importar', {method:'POST', body: fd});
     const d = await r.json();
     setImportLoading(false);
@@ -212,13 +216,17 @@ export default function Home() {
   const confirmarImport = async () => {
     if (!importFile || !importPreview?.length) return;
     setImportLoading(true);
-    const fd = new FormData(); fd.append('file', importFile); fd.append('confirmar','true');
+    const fd = new FormData();
+    fd.append('file', importFile); fd.append('confirmar','true');
+    fd.append('destino', importDestino);
+    fd.append('mes', String(mesSel)); fd.append('ano', String(anoSel));
     const r = await fetch('/api/importar', {method:'POST', body: fd});
     const d = await r.json();
     setImportLoading(false);
     if (d.error) { setErro(d.error); return; }
-    setModalImport(false); showToast(`${d.inseridas} conta(s) importada(s)!`);
-    carregarFixas();
+    setModalImport(false);
+    showToast(`${d.inseridas} conta(s) importada(s) com sucesso!`);
+    if (importDestino === 'fixas') carregarFixas(); else carregarPagamentos();
   };
 
   const badgeDia = (p: Pagamento) => {
@@ -234,21 +242,46 @@ export default function Home() {
     return { cor:'#2563eb', bg:'#dbeafe', label:`Dia ${p.dia_vencimento}` };
   };
 
+  // Separar pagamentos por origem
+  const pagsFixos = pagamentos.filter(p => !p.avulso);
+  const pagsAvulsos = pagamentos.filter(p => p.avulso);
   const totalAlertas = alertas.vencidas.length + alertas.vencendo.length;
-  const s = { input: { width:'100%', padding:'10px 14px', borderRadius:8, border:'1px solid #d1d5db', fontSize:15, boxSizing:'border-box' as const } };
+  const inp = { width:'100%', padding:'10px 14px', borderRadius:8, border:'1px solid #d1d5db', fontSize:15, boxSizing:'border-box' as const };
+
+  const CardPagamento = ({p}: {p: Pagamento}) => {
+    const badge = badgeDia(p);
+    return (
+      <div style={{background:'#fff', borderRadius:12, border:`1px solid ${p.status==='pago'?'#bbf7d0':'#e2e8f0'}`, padding:'14px 20px', display:'flex', alignItems:'center', gap:14, flexWrap:'wrap', opacity: p.status==='pago' ? 0.72 : 1}}>
+        <div style={{flex:1, minWidth:180}}>
+          <div style={{display:'flex', alignItems:'center', gap:8, flexWrap:'wrap'}}>
+            <span style={{fontWeight:700, fontSize:15, color:'#1e293b'}}>{p.empresa}</span>
+            {p.avulso && <span style={{fontSize:11, background:'#fef3c7', color:'#92400e', padding:'1px 7px', borderRadius:20, fontWeight:600}}>avulso</span>}
+            {!p.avulso && <span style={{fontSize:11, background:'#ede9fe', color:'#5b21b6', padding:'1px 7px', borderRadius:20, fontWeight:600}}>fixa</span>}
+          </div>
+          {p.observacoes && <div style={{fontSize:13, color:'#64748b', marginTop:2}}>{p.observacoes}</div>}
+        </div>
+        <div style={{fontWeight:700, fontSize:18, color: p.status==='pago'?'#16a34a':'#dc2626'}}>
+          R$ {parseFloat(String(p.valor)).toLocaleString('pt-BR',{minimumFractionDigits:2})}
+        </div>
+        <span style={{background:badge.bg, color:badge.cor, padding:'4px 12px', borderRadius:20, fontSize:12, fontWeight:700}}>{badge.label}</span>
+        <div style={{display:'flex', gap:6}}>
+          <button onClick={() => marcarPago(p)} style={{padding:'7px 12px', borderRadius:8, border:'1px solid #e2e8f0', background:'#f8fafc', cursor:'pointer'}}>{p.status==='pago'?'↩️':'✅'}</button>
+          <button onClick={() => abrirModalPag(p)} style={{padding:'7px 12px', borderRadius:8, border:'1px solid #e2e8f0', background:'#f8fafc', cursor:'pointer'}}>✏️</button>
+          <button onClick={() => excluirPag(p.id)} style={{padding:'7px 12px', borderRadius:8, border:'1px solid #fee2e2', background:'#fef2f2', cursor:'pointer'}}>🗑️</button>
+        </div>
+      </div>
+    );
+  };
 
   return (
     <div style={{minHeight:'100vh', background:'#f8fafc', fontFamily:'system-ui, sans-serif'}}>
-      {/* Header */}
       <header style={{background:'#1e293b', color:'#fff', padding:'0 24px', display:'flex', alignItems:'center', justifyContent:'space-between', height:64}}>
         <div style={{display:'flex', alignItems:'center', gap:12}}>
           <span style={{fontSize:22}}>💰</span>
           <span style={{fontWeight:700, fontSize:18}}>Contas a Pagar</span>
         </div>
         <div style={{display:'flex', gap:10}}>
-          <button onClick={abrirImport} style={{background:'transparent', color:'#94a3b8', border:'1px solid #334155', borderRadius:8, padding:'8px 14px', cursor:'pointer', fontWeight:600, fontSize:13}}>
-            📂 Importar
-          </button>
+          <button onClick={abrirImport} style={{background:'transparent', color:'#94a3b8', border:'1px solid #334155', borderRadius:8, padding:'8px 14px', cursor:'pointer', fontWeight:600, fontSize:13}}>📂 Importar</button>
           <button onClick={() => aba === 'fixas' ? abrirModalFixa() : abrirModalPag()} style={{background:'#3b82f6', color:'#fff', border:'none', borderRadius:8, padding:'8px 16px', cursor:'pointer', fontWeight:600, fontSize:14}}>
             + {aba === 'fixas' ? 'Nova Conta Fixa' : 'Lançamento Avulso'}
           </button>
@@ -258,8 +291,6 @@ export default function Home() {
       {toast && <div style={{position:'fixed', top:20, right:20, background:'#1e293b', color:'#fff', padding:'12px 24px', borderRadius:10, zIndex:9999}}>✅ {toast}</div>}
 
       <div style={{maxWidth:980, margin:'0 auto', padding:'24px 16px'}}>
-
-        {/* Banner alertas */}
         {totalAlertas > 0 && (
           <div style={{background:'#fef3c7', border:'1px solid #f59e0b', borderRadius:10, padding:'12px 18px', marginBottom:20, display:'flex', alignItems:'center', justifyContent:'space-between', flexWrap:'wrap', gap:10}}>
             <span style={{color:'#92400e', fontWeight:600}}>⚠️ {alertas.vencidas.length} vencida(s) · {alertas.vencendo.length} vencendo em até 3 dias</span>
@@ -267,13 +298,12 @@ export default function Home() {
           </div>
         )}
 
-        {/* Cards */}
-        <div style={{display:'grid', gridTemplateColumns:'repeat(auto-fit, minmax(170px,1fr))', gap:16, marginBottom:28}}>
+        <div style={{display:'grid', gridTemplateColumns:'repeat(auto-fit, minmax(160px,1fr))', gap:16, marginBottom:28}}>
           {[
             {label:'Pendente', valor:`R$ ${parseFloat(String(totalPendente)).toLocaleString('pt-BR',{minimumFractionDigits:2})}`, cor:'#dc2626'},
             {label:'Pago', valor:`R$ ${parseFloat(String(totalPago)).toLocaleString('pt-BR',{minimumFractionDigits:2})}`, cor:'#16a34a'},
             {label:'Total do Mês', valor:`R$ ${(parseFloat(String(totalPendente))+parseFloat(String(totalPago))).toLocaleString('pt-BR',{minimumFractionDigits:2})}`, cor:'#1e293b'},
-            {label:'Contas Fixas', valor:`${fixas.filter(f=>f.ativa).length} ativas`, cor:'#2563eb'},
+            {label:'Contas Fixas Ativas', valor:`${fixas.filter(f=>f.ativa).length}`, cor:'#5b21b6'},
           ].map(c => (
             <div key={c.label} style={{background:'#fff', borderRadius:12, border:'1px solid #e2e8f0', padding:'18px 20px'}}>
               <div style={{fontSize:12, color:'#64748b', marginBottom:4}}>{c.label}</div>
@@ -282,16 +312,15 @@ export default function Home() {
           ))}
         </div>
 
-        {/* Abas */}
         <div style={{display:'flex', gap:8, marginBottom:20}}>
           {([['pagamentos','📋 Pagamentos'],['fixas','🔒 Contas Fixas'],['alertas',`🔔 Alertas${totalAlertas>0?` (${totalAlertas})`:''}`]] as const).map(([id,label]) => (
-            <button key={id} onClick={() => setAba(id)} style={{padding:'8px 18px', borderRadius:8, border:'none', cursor:'pointer', fontWeight:600, fontSize:14, background: aba===id ? '#1e293b' : '#fff', color: aba===id ? '#fff' : '#64748b'}}>
+            <button key={id} onClick={() => setAba(id)} style={{padding:'8px 18px', borderRadius:8, border:'none', cursor:'pointer', fontWeight:600, fontSize:14, background: aba===id?'#1e293b':'#fff', color: aba===id?'#fff':'#64748b'}}>
               {label}
             </button>
           ))}
         </div>
 
-        {/* ABA: PAGAMENTOS */}
+        {/* ABA PAGAMENTOS */}
         {aba === 'pagamentos' && (
           <>
             <div style={{display:'flex', gap:12, marginBottom:20, alignItems:'center', flexWrap:'wrap'}}>
@@ -299,7 +328,7 @@ export default function Home() {
                 {MESES.map((m,i) => <option key={i} value={i+1}>{m}</option>)}
               </select>
               <input type="number" value={anoSel} onChange={e => setAnoSel(+e.target.value)} style={{width:90, padding:'8px 12px', borderRadius:8, border:'1px solid #e2e8f0', fontSize:14}} />
-              <button onClick={carregarPagamentos} style={{padding:'8px 14px', borderRadius:8, border:'1px solid #e2e8f0', background:'#fff', cursor:'pointer', fontSize:14}}>🔄</button>
+              <button onClick={carregarPagamentos} style={{padding:'8px 14px', borderRadius:8, border:'1px solid #e2e8f0', background:'#fff', cursor:'pointer'}}>🔄</button>
               {!mesGerado && fixas.length > 0 && (
                 <button onClick={gerarMes} style={{padding:'8px 18px', borderRadius:8, border:'none', background:'#7c3aed', color:'#fff', cursor:'pointer', fontWeight:600, fontSize:14}}>
                   ⚡ Gerar {MESES[mesSel-1]}
@@ -312,71 +341,67 @@ export default function Home() {
             ) : pagamentos.length === 0 ? (
               <div style={{textAlign:'center', padding:60, color:'#94a3b8'}}>
                 <div style={{fontSize:48}}>📭</div>
-                <div style={{marginTop:8, marginBottom:16}}>Nenhum pagamento neste período</div>
-                {fixas.length > 0 ? (
-                  <button onClick={gerarMes} style={{background:'#7c3aed', color:'#fff', border:'none', borderRadius:8, padding:'12px 24px', cursor:'pointer', fontWeight:700, fontSize:15}}>
-                    ⚡ Gerar pagamentos de {MESES[mesSel-1]}
-                  </button>
-                ) : (
-                  <div style={{fontSize:13, color:'#94a3b8'}}>Cadastre contas fixas primeiro, ou adicione um lançamento avulso.</div>
-                )}
+                <div style={{marginTop:8, marginBottom:16}}>Nenhum pagamento em {MESES[mesSel-1]} {anoSel}</div>
+                <div style={{display:'flex', gap:10, justifyContent:'center', flexWrap:'wrap'}}>
+                  {fixas.length > 0 && <button onClick={gerarMes} style={{background:'#7c3aed', color:'#fff', border:'none', borderRadius:8, padding:'10px 20px', cursor:'pointer', fontWeight:600}}>⚡ Gerar fixas do mês</button>}
+                  <button onClick={() => abrirModalPag()} style={{background:'#3b82f6', color:'#fff', border:'none', borderRadius:8, padding:'10px 20px', cursor:'pointer', fontWeight:600}}>+ Lançamento avulso</button>
+                  <button onClick={abrirImport} style={{background:'#fff', color:'#1e293b', border:'1px solid #e2e8f0', borderRadius:8, padding:'10px 20px', cursor:'pointer'}}>📂 Importar planilha</button>
+                </div>
               </div>
             ) : (
-              <div style={{display:'flex', flexDirection:'column', gap:10}}>
-                {pagamentos.map(p => {
-                  const badge = badgeDia(p);
-                  return (
-                    <div key={p.id} style={{background:'#fff', borderRadius:12, border:`1px solid ${p.status==='pago'?'#bbf7d0':'#e2e8f0'}`, padding:'14px 20px', display:'flex', alignItems:'center', gap:14, flexWrap:'wrap', opacity: p.status==='pago' ? 0.72 : 1}}>
-                      <div style={{flex:1, minWidth:180}}>
-                        <div style={{display:'flex', alignItems:'center', gap:8}}>
-                          <span style={{fontWeight:700, fontSize:15, color:'#1e293b'}}>{p.empresa}</span>
-                          {p.avulso && <span style={{fontSize:11, background:'#fef3c7', color:'#92400e', padding:'1px 7px', borderRadius:20, fontWeight:600}}>avulso</span>}
-                        </div>
-                        {p.observacoes && <div style={{fontSize:13, color:'#64748b', marginTop:2}}>{p.observacoes}</div>}
-                      </div>
-                      <div style={{fontWeight:700, fontSize:18, color: p.status==='pago'?'#16a34a':'#dc2626'}}>
-                        R$ {parseFloat(String(p.valor)).toLocaleString('pt-BR',{minimumFractionDigits:2})}
-                      </div>
-                      <span style={{background:badge.bg, color:badge.cor, padding:'4px 12px', borderRadius:20, fontSize:12, fontWeight:700}}>{badge.label}</span>
-                      <div style={{display:'flex', gap:6}}>
-                        <button onClick={() => marcarPago(p)} style={{padding:'7px 12px', borderRadius:8, border:'1px solid #e2e8f0', background:'#f8fafc', cursor:'pointer'}}>{p.status==='pago'?'↩️':'✅'}</button>
-                        <button onClick={() => abrirModalPag(p)} style={{padding:'7px 12px', borderRadius:8, border:'1px solid #e2e8f0', background:'#f8fafc', cursor:'pointer'}}>✏️</button>
-                        <button onClick={() => excluirPag(p.id)} style={{padding:'7px 12px', borderRadius:8, border:'1px solid #fee2e2', background:'#fef2f2', cursor:'pointer'}}>🗑️</button>
-                      </div>
+              <div style={{display:'flex', flexDirection:'column', gap:20}}>
+                {/* Seção fixas */}
+                {pagsFixos.length > 0 && (
+                  <div>
+                    <div style={{fontSize:13, fontWeight:700, color:'#5b21b6', marginBottom:10, display:'flex', alignItems:'center', gap:8}}>
+                      🔒 CONTAS FIXAS <span style={{background:'#ede9fe', color:'#5b21b6', padding:'2px 8px', borderRadius:20, fontSize:11}}>{pagsFixos.length}</span>
                     </div>
-                  );
-                })}
+                    <div style={{display:'flex', flexDirection:'column', gap:8}}>
+                      {pagsFixos.map(p => <CardPagamento key={p.id} p={p} />)}
+                    </div>
+                  </div>
+                )}
+
+                {/* Seção avulsos (manual + importado) */}
+                {pagsAvulsos.length > 0 && (
+                  <div>
+                    <div style={{fontSize:13, fontWeight:700, color:'#92400e', marginBottom:10, display:'flex', alignItems:'center', gap:8}}>
+                      📌 AVULSOS / IMPORTADOS <span style={{background:'#fef3c7', color:'#92400e', padding:'2px 8px', borderRadius:20, fontSize:11}}>{pagsAvulsos.length}</span>
+                    </div>
+                    <div style={{display:'flex', flexDirection:'column', gap:8}}>
+                      {pagsAvulsos.map(p => <CardPagamento key={p.id} p={p} />)}
+                    </div>
+                  </div>
+                )}
               </div>
             )}
           </>
         )}
 
-        {/* ABA: CONTAS FIXAS */}
+        {/* ABA FIXAS */}
         {aba === 'fixas' && (
           <div>
-            <div style={{fontSize:13, color:'#64748b', marginBottom:16}}>
-              Contas fixas são geradas automaticamente todo mês. Desative as que não se aplicam temporariamente.
-            </div>
+            <div style={{fontSize:13, color:'#64748b', marginBottom:16}}>Cadastradas uma vez e geradas automaticamente todo mês. Use ⏸️ para desativar temporariamente.</div>
             {fixas.length === 0 ? (
               <div style={{textAlign:'center', padding:60, color:'#94a3b8'}}>
                 <div style={{fontSize:48}}>🔒</div>
                 <div style={{marginTop:8, marginBottom:16}}>Nenhuma conta fixa cadastrada</div>
-                <button onClick={() => abrirModalFixa()} style={{background:'#1e293b', color:'#fff', border:'none', borderRadius:8, padding:'10px 20px', cursor:'pointer'}}>+ Cadastrar primeira conta fixa</button>
+                <div style={{display:'flex', gap:10, justifyContent:'center'}}>
+                  <button onClick={() => abrirModalFixa()} style={{background:'#1e293b', color:'#fff', border:'none', borderRadius:8, padding:'10px 20px', cursor:'pointer'}}>+ Cadastrar manualmente</button>
+                  <button onClick={abrirImport} style={{background:'#fff', color:'#1e293b', border:'1px solid #e2e8f0', borderRadius:8, padding:'10px 20px', cursor:'pointer'}}>📂 Importar planilha</button>
+                </div>
               </div>
             ) : (
-              <div style={{display:'flex', flexDirection:'column', gap:10}}>
+              <div style={{display:'flex', flexDirection:'column', gap:8}}>
                 {fixas.map(f => (
                   <div key={f.id} style={{background:'#fff', borderRadius:12, border:'1px solid #e2e8f0', padding:'14px 20px', display:'flex', alignItems:'center', gap:14, flexWrap:'wrap', opacity: f.ativa ? 1 : 0.5}}>
                     <div style={{flex:1, minWidth:180}}>
                       <div style={{fontWeight:700, fontSize:15, color:'#1e293b'}}>{f.empresa}</div>
                       {f.observacoes && <div style={{fontSize:13, color:'#64748b', marginTop:2}}>{f.observacoes}</div>}
                     </div>
-                    <div style={{fontWeight:700, fontSize:18, color:'#1e293b'}}>
-                      R$ {parseFloat(String(f.valor)).toLocaleString('pt-BR',{minimumFractionDigits:2})}
-                    </div>
-                    <span style={{background:'#f1f5f9', color:'#475569', padding:'4px 12px', borderRadius:20, fontSize:12, fontWeight:600}}>
-                      Todo dia {f.dia_vencimento}
-                    </span>
+                    <div style={{fontWeight:700, fontSize:18, color:'#1e293b'}}>R$ {parseFloat(String(f.valor)).toLocaleString('pt-BR',{minimumFractionDigits:2})}</div>
+                    <span style={{background:'#f1f5f9', color:'#475569', padding:'4px 12px', borderRadius:20, fontSize:12, fontWeight:600}}>Todo dia {f.dia_vencimento}</span>
+                    {!f.ativa && <span style={{background:'#fee2e2', color:'#dc2626', padding:'4px 10px', borderRadius:20, fontSize:11, fontWeight:600}}>inativa</span>}
                     <div style={{display:'flex', gap:6}}>
                       <button onClick={() => toggleAtiva(f)} title={f.ativa?'Desativar':'Ativar'} style={{padding:'7px 12px', borderRadius:8, border:'1px solid #e2e8f0', background:'#f8fafc', cursor:'pointer'}}>{f.ativa?'⏸️':'▶️'}</button>
                       <button onClick={() => abrirModalFixa(f)} style={{padding:'7px 12px', borderRadius:8, border:'1px solid #e2e8f0', background:'#f8fafc', cursor:'pointer'}}>✏️</button>
@@ -389,11 +414,11 @@ export default function Home() {
           </div>
         )}
 
-        {/* ABA: ALERTAS */}
+        {/* ABA ALERTAS */}
         {aba === 'alertas' && (
           <div style={{display:'flex', flexDirection:'column', gap:20}}>
             <div style={{background:'#fff', borderRadius:12, border:'1px solid #e2e8f0', padding:'20px 24px'}}>
-              <h3 style={{margin:'0 0 14px', fontSize:16, fontWeight:700}}>📨 Enviar Alertas</h3>
+              <h3 style={{margin:'0 0 14px', fontSize:16, fontWeight:700}}>📨 Enviar Alertas Manuais</h3>
               <div style={{display:'flex', gap:10, flexWrap:'wrap'}}>
                 <input type="email" placeholder="Email de destino" value={emailAlerta} onChange={e => setEmailAlerta(e.target.value)} style={{flex:1, minWidth:200, padding:'10px 14px', borderRadius:8, border:'1px solid #e2e8f0', fontSize:14}} />
                 <button onClick={enviarEmail} style={{padding:'10px 18px', borderRadius:8, border:'none', background:'#3b82f6', color:'#fff', cursor:'pointer', fontWeight:600}}>📧 Email</button>
@@ -428,12 +453,12 @@ export default function Home() {
         )}
       </div>
 
-      {/* Modal Pagamento */}
+      {/* Modal Pagamento Avulso */}
       {modalPag && (
         <div style={{position:'fixed', inset:0, background:'rgba(0,0,0,0.5)', display:'flex', alignItems:'center', justifyContent:'center', zIndex:1000, padding:20}}>
           <div style={{background:'#fff', borderRadius:16, padding:28, width:'100%', maxWidth:460}}>
             <div style={{display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:22}}>
-              <h2 style={{margin:0, fontSize:18, fontWeight:700}}>{editPag ? 'Editar Lançamento' : 'Lançamento Avulso'}</h2>
+              <h2 style={{margin:0, fontSize:18, fontWeight:700}}>{editPag ? 'Editar Lançamento' : `Lançamento Avulso — ${MESES[mesSel-1]} ${anoSel}`}</h2>
               <button onClick={() => setModalPag(false)} style={{border:'none', background:'none', cursor:'pointer', fontSize:20}}>✕</button>
             </div>
             {[
@@ -445,7 +470,7 @@ export default function Home() {
               <div key={key} style={{marginBottom:14}}>
                 <label style={{display:'block', fontSize:13, fontWeight:600, marginBottom:5, color:'#374151'}}>{label}</label>
                 <input type={type} placeholder={placeholder} value={(formPag as any)[key]}
-                  onChange={e => setFormPag(f => ({...f, [key]: e.target.value}))} style={s.input} />
+                  onChange={e => setFormPag(f => ({...f, [key]: e.target.value}))} style={inp} />
               </div>
             ))}
             {erro && <div style={{color:'#dc2626', fontSize:13, marginBottom:12}}>⚠️ {erro}</div>}
@@ -476,7 +501,7 @@ export default function Home() {
               <div key={key} style={{marginBottom:14}}>
                 <label style={{display:'block', fontSize:13, fontWeight:600, marginBottom:5, color:'#374151'}}>{label}</label>
                 <input type={type} placeholder={placeholder} value={(formFixa as any)[key]}
-                  onChange={e => setFormFixa(f => ({...f, [key]: e.target.value}))} style={s.input} />
+                  onChange={e => setFormFixa(f => ({...f, [key]: e.target.value}))} style={inp} />
               </div>
             ))}
             {erro && <div style={{color:'#dc2626', fontSize:13, marginBottom:12}}>⚠️ {erro}</div>}
@@ -493,48 +518,71 @@ export default function Home() {
       {/* Modal Importar */}
       {modalImport && (
         <div style={{position:'fixed', inset:0, background:'rgba(0,0,0,0.5)', display:'flex', alignItems:'center', justifyContent:'center', zIndex:1000, padding:20}}>
-          <div style={{background:'#fff', borderRadius:16, padding:28, width:'100%', maxWidth:580, maxHeight:'85vh', overflowY:'auto'}}>
+          <div style={{background:'#fff', borderRadius:16, padding:28, width:'100%', maxWidth:580, maxHeight:'90vh', overflowY:'auto'}}>
             <div style={{display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:20}}>
-              <h2 style={{margin:0, fontSize:18, fontWeight:700}}>📂 Importar Contas Fixas</h2>
+              <h2 style={{margin:0, fontSize:18, fontWeight:700}}>📂 Importar Planilha</h2>
               <button onClick={() => setModalImport(false)} style={{border:'none', background:'none', cursor:'pointer', fontSize:20}}>✕</button>
             </div>
+
+            {/* Escolha de destino */}
+            <div style={{marginBottom:20}}>
+              <div style={{fontSize:13, fontWeight:600, color:'#374151', marginBottom:10}}>Importar como:</div>
+              <div style={{display:'flex', gap:10}}>
+                {([['pagamentos','📌 Avulsos do Mês','Aparecem em Pagamentos deste mês'],['fixas','🔒 Contas Fixas','Cadastro permanente, gerado todo mês']] as const).map(([val,label,desc]) => (
+                  <div key={val} onClick={() => { setImportDestino(val); setImportPreview(null); }}
+                    style={{flex:1, border:`2px solid ${importDestino===val?'#1e293b':'#e2e8f0'}`, borderRadius:10, padding:'12px 14px', cursor:'pointer', background: importDestino===val?'#f8fafc':'#fff'}}>
+                    <div style={{fontWeight:700, fontSize:14, color:'#1e293b', marginBottom:2}}>{label}</div>
+                    <div style={{fontSize:12, color:'#64748b'}}>{desc}</div>
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            {importDestino === 'pagamentos' && (
+              <div style={{background:'#eff6ff', borderRadius:8, padding:'10px 14px', marginBottom:16, fontSize:13, color:'#1e40af'}}>
+                📅 Será importado para <strong>{MESES[mesSel-1]} {anoSel}</strong>. Mude o mês na tela principal se precisar.
+              </div>
+            )}
+
+            {/* Modelo de colunas */}
             <div style={{background:'#f8fafc', borderRadius:10, padding:'12px 16px', marginBottom:16, fontSize:13, color:'#64748b'}}>
-              A importação adiciona as contas como <strong>contas fixas</strong>. Use colunas: <code>empresa</code>, <code>dia_vencimento</code>, <code>valor</code>, <code>observacoes</code> (opcional).
+              <div style={{fontWeight:600, color:'#1e293b', marginBottom:6}}>Colunas esperadas na planilha:</div>
+              {importDestino === 'fixas'
+                ? <code>empresa · dia_vencimento · valor · observacoes (opcional)</code>
+                : <code>empresa · dia_vencimento (ou data_vencimento) · valor · observacoes (opcional)</code>
+              }
             </div>
-            <div style={{marginBottom:16, overflowX:'auto'}}>
-              <table style={{width:'100%', borderCollapse:'collapse', fontSize:13}}>
-                <thead><tr style={{background:'#1e293b', color:'#fff'}}>
-                  {['empresa','dia_vencimento','valor','observacoes'].map(h => <th key={h} style={{padding:'8px 12px', textAlign:'left'}}>{h}</th>)}
-                </tr></thead>
-                <tbody>
-                  {[['Aluguel','5','3200',''],['Energia','10','450',''],['Internet','15','199.90','Fibra 500MB']].map((r,i) => (
-                    <tr key={i} style={{background: i%2===0?'#f8fafc':'#fff'}}>
-                      {r.map((c,j) => <td key={j} style={{padding:'7px 12px', borderBottom:'1px solid #e2e8f0'}}>{c}</td>)}
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
+
             <div onClick={() => fileRef.current?.click()} style={{border:`2px dashed ${importFile?'#3b82f6':'#cbd5e1'}`, borderRadius:12, padding:24, textAlign:'center', cursor:'pointer', background: importFile?'#eff6ff':'#f8fafc', marginBottom:14}}>
               <div style={{fontSize:32, marginBottom:6}}>{importFile?'📄':'📁'}</div>
-              <div style={{fontWeight:600, color:'#1e293b'}}>{importFile ? importFile.name : 'Clique para selecionar'}</div>
+              <div style={{fontWeight:600, color:'#1e293b'}}>{importFile ? importFile.name : 'Clique para selecionar o arquivo'}</div>
               <div style={{fontSize:13, color:'#64748b'}}>.xlsx, .xls, .csv</div>
-              <input ref={fileRef} type="file" accept=".xlsx,.xls,.csv" onChange={onFileChange} style={{display:'none'}} />
+              <input ref={fileRef} type="file" accept=".xlsx,.xls,.csv,.pdf" onChange={onFileChange} style={{display:'none'}} />
             </div>
+
             {erro && <div style={{background:'#fef2f2', border:'1px solid #fecaca', borderRadius:8, padding:'10px 14px', color:'#dc2626', fontSize:13, marginBottom:14}}>⚠️ {erro}</div>}
-            {importPreview && (
+
+            {importPreview && importPreview.length > 0 && (
               <div style={{marginBottom:14}}>
-                <div style={{fontWeight:600, fontSize:14, marginBottom:8}}>{importPreview.length} conta(s) encontrada(s){importStats?.invalidas ? ` · ${importStats.invalidas} ignorada(s)`:''}</div>
-                <div style={{maxHeight:180, overflowY:'auto', border:'1px solid #e2e8f0', borderRadius:8}}>
+                <div style={{fontWeight:600, fontSize:14, marginBottom:8, color:'#1e293b'}}>
+                  {importPreview.length} conta(s) encontrada(s)
+                  {importStats?.invalidas ? <span style={{marginLeft:8, background:'#fef3c7', color:'#92400e', fontSize:12, padding:'2px 8px', borderRadius:20}}>{importStats.invalidas} ignorada(s)</span> : ''}
+                </div>
+                <div style={{maxHeight:200, overflowY:'auto', border:'1px solid #e2e8f0', borderRadius:8}}>
                   <table style={{width:'100%', borderCollapse:'collapse', fontSize:13}}>
                     <thead style={{position:'sticky', top:0, background:'#f1f5f9'}}>
-                      <tr>{['Empresa','Dia','Valor','Obs.'].map(h=><th key={h} style={{padding:'8px 12px', textAlign:'left', fontWeight:600}}>{h}</th>)}</tr>
+                      <tr>
+                        <th style={{padding:'8px 12px', textAlign:'left', fontWeight:600}}>Empresa</th>
+                        <th style={{padding:'8px 12px', textAlign:'left', fontWeight:600}}>Dia</th>
+                        <th style={{padding:'8px 12px', textAlign:'left', fontWeight:600}}>Valor</th>
+                        <th style={{padding:'8px 12px', textAlign:'left', fontWeight:600}}>Obs.</th>
+                      </tr>
                     </thead>
                     <tbody>
                       {importPreview.map((c,i) => (
                         <tr key={i} style={{background:i%2===0?'#fff':'#f8fafc'}}>
                           <td style={{padding:'7px 12px', borderBottom:'1px solid #f1f5f9'}}>{c.empresa}</td>
-                          <td style={{padding:'7px 12px', borderBottom:'1px solid #f1f5f9'}}>{c.data_vencimento}</td>
+                          <td style={{padding:'7px 12px', borderBottom:'1px solid #f1f5f9'}}>{c.dia_vencimento || (c.data_vencimento ? c.data_vencimento.split('-')[2] : '-')}</td>
                           <td style={{padding:'7px 12px', borderBottom:'1px solid #f1f5f9', color:'#dc2626', fontWeight:600}}>R$ {c.valor?.toLocaleString('pt-BR',{minimumFractionDigits:2})}</td>
                           <td style={{padding:'7px 12px', borderBottom:'1px solid #f1f5f9', color:'#64748b'}}>{c.observacoes||'-'}</td>
                         </tr>
@@ -544,11 +592,12 @@ export default function Home() {
                 </div>
               </div>
             )}
+
             <div style={{display:'flex', gap:10}}>
               <button onClick={() => setModalImport(false)} style={{flex:1, padding:12, borderRadius:8, border:'1px solid #e2e8f0', background:'#f8fafc', cursor:'pointer', fontWeight:600}}>Cancelar</button>
               {!importPreview
                 ? <button onClick={previewImport} disabled={!importFile||importLoading} style={{flex:2, padding:12, borderRadius:8, border:'none', background:importFile?'#3b82f6':'#94a3b8', color:'#fff', cursor:importFile?'pointer':'default', fontWeight:700}}>
-                    {importLoading?'Analisando...':'🔍 Analisar'}
+                    {importLoading?'Analisando...':'🔍 Analisar arquivo'}
                   </button>
                 : <button onClick={confirmarImport} disabled={importLoading||!importPreview.length} style={{flex:2, padding:12, borderRadius:8, border:'none', background:'#16a34a', color:'#fff', cursor:'pointer', fontWeight:700}}>
                     {importLoading?'Importando...':`✅ Importar ${importPreview.length} conta(s)`}
