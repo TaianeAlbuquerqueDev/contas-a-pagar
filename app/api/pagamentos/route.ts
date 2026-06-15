@@ -69,12 +69,12 @@ export async function POST(request: NextRequest) {
 
     // Inserir pagamento avulso
     const { empresa, mes, ano, dia_vencimento, valor, observacoes } = body;
-    if (!empresa || !mes || !ano || !dia_vencimento || !valor)
+    if (!empresa || !mes || !ano || !dia_vencimento)
       return NextResponse.json({ error: 'Campos obrigatórios faltando.' }, { status: 400 });
 
     const result = await sql`
       INSERT INTO pagamentos (empresa, mes, ano, dia_vencimento, valor, observacoes, avulso)
-      VALUES (${empresa}, ${mes}, ${ano}, ${dia_vencimento}, ${parseFloat(valor)}, ${observacoes || ''}, TRUE)
+      VALUES (${empresa}, ${mes}, ${ano}, ${dia_vencimento}, ${valor ? parseFloat(valor) : null}, ${observacoes || ''}, TRUE)
       RETURNING *
     `;
     return NextResponse.json(result[0], { status: 201 });
@@ -92,7 +92,7 @@ export async function PUT(request: NextRequest) {
       UPDATE pagamentos
       SET empresa = ${empresa},
           dia_vencimento = ${dia_vencimento},
-          valor = ${parseFloat(valor)},
+          valor = ${valor ? parseFloat(valor) : null},
           observacoes = ${observacoes || ''},
           status = ${status},
           data_pagamento = ${status === 'pago' ? new Date().toISOString().split('T')[0] : null}

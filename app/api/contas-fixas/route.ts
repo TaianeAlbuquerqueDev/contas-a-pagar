@@ -15,12 +15,12 @@ export async function POST(request: NextRequest) {
   try {
     await initDB();
     const { empresa, dia_vencimento, valor, observacoes } = await request.json();
-    if (!empresa || !dia_vencimento || !valor)
+    if (!empresa || !dia_vencimento)
       return NextResponse.json({ error: 'Campos obrigatórios: empresa, dia_vencimento, valor' }, { status: 400 });
 
     const result = await sql`
       INSERT INTO contas_fixas (empresa, dia_vencimento, valor, observacoes)
-      VALUES (${empresa}, ${dia_vencimento}, ${parseFloat(valor)}, ${observacoes || ''})
+      VALUES (${empresa}, ${dia_vencimento}, ${valor ? parseFloat(valor) : null}, ${observacoes || ''})
       RETURNING *
     `;
     return NextResponse.json(result[0], { status: 201 });
@@ -35,7 +35,7 @@ export async function PUT(request: NextRequest) {
     const result = await sql`
       UPDATE contas_fixas
       SET empresa = ${empresa}, dia_vencimento = ${dia_vencimento},
-          valor = ${parseFloat(valor)}, observacoes = ${observacoes || ''},
+          valor = ${valor ? parseFloat(valor) : null}, observacoes = ${observacoes || ''},
           ativa = ${ativa ?? true}
       WHERE id = ${id}
       RETURNING *

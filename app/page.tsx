@@ -118,7 +118,7 @@ export default function Home() {
   };
 
   const salvarPag = async () => {
-    if (!formPag.empresa || !formPag.dia_vencimento || !formPag.valor) { setErro('Preencha empresa, dia e valor.'); return; }
+    if (!formPag.empresa || !formPag.dia_vencimento) { setErro('Preencha empresa e dia de vencimento.'); return; }
     setLoading(true); setErro('');
     if (editPag) {
       await fetch('/api/pagamentos', { method:'PUT', headers:{'Content-Type':'application/json'},
@@ -147,7 +147,7 @@ export default function Home() {
   };
 
   const salvarFixa = async () => {
-    if (!formFixa.empresa || !formFixa.dia_vencimento || !formFixa.valor) { setErro('Preencha todos os campos.'); return; }
+    if (!formFixa.empresa || !formFixa.dia_vencimento) { setErro('Preencha empresa e dia de vencimento.'); return; }
     setLoading(true); setErro('');
     if (editFixa) {
       await fetch('/api/contas-fixas', { method:'PUT', headers:{'Content-Type':'application/json'},
